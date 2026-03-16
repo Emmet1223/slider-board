@@ -1260,6 +1260,7 @@ const styles = {
     color: 'white',
     padding: 14,
     fontFamily: 'Arial, sans-serif',
+    overflowX: 'hidden',
   },
   appShell: {
     maxWidth: 2100,
