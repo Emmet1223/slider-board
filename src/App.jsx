@@ -801,12 +801,22 @@ export default function App() {
           .slider-grid-fixed {
             grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
           }
+
+          .mobile-top-card {
+            flex-direction: column !important;
+            align-items: stretch !important;
+          }
+        
+          .mobile-top-actions {
+            width: 100% !important;
+            justify-content: flex-start !important;
+          }
         }
       `}</style>
 
       <div className="app-shell" style={styles.appShell}>
         <div style={styles.mainColumn}>
-          <div style={styles.topCard}>
+          <div className="mobile-top-card" style={styles.topCard}>
             <div>
               <input
                 className="hover-edit"
@@ -830,7 +840,7 @@ export default function App() {
               </div>
             </div>
 
-            <div style={styles.actionRow}>
+            <div className="mobile-top-actions" style={styles.actionRow}>
               <button className="button-soft" onClick={addRow}>Add row</button>
               <button
                 className="button-soft"
@@ -1353,6 +1363,7 @@ const styles = {
     justifyContent: 'space-between',
     gap: 20,
     alignItems: 'flex-start',
+    flexWrap: 'wrap',
     padding: 24,
     borderRadius: 28,
     border: '1px solid rgba(255,255,255,0.12)',
