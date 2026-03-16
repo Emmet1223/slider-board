@@ -165,6 +165,14 @@ export default function App() {
     )
   }
 
+  function setRowTimestampLocally(rowId, timestamp) {
+    setRows((prev) =>
+      prev.map((row) =>
+        row.id === rowId ? { ...row, last_updated_at: timestamp } : row
+      )
+    )
+  }
+
   function addRowLocally(row) {
     setRows((prev) => {
       if (prev.some((r) => r.id === row.id)) return prev
@@ -272,10 +280,6 @@ export default function App() {
         if (!payload || payload.senderId === clientIdRef.current) return
         setBoard((prev) => ({ ...(prev || {}), title: payload.title }))
       })
-      .on('broadcast', { event: 'board-timestamp' }, ({ payload }) => {
-        if (!payload || payload.senderId === clientIdRef.current) return
-        setBoard((prev) => ({ ...(prev || {}), last_updated_at: payload.lastUpdatedAt }))
-      })
       .on('broadcast', { event: 'row-added' }, ({ payload }) => {
         if (!payload || payload.senderId === clientIdRef.current) return
         addRowLocally(payload.row)
@@ -295,6 +299,10 @@ export default function App() {
       .on('broadcast', { event: 'row-want-to-talk' }, ({ payload }) => {
         if (!payload || payload.senderId === clientIdRef.current) return
         setRowWantToTalkLocally(payload.rowId, payload.wantToTalk)
+      })
+      .on('broadcast', { event: 'row-timestamp' }, ({ payload }) => {
+        if (!payload || payload.senderId === clientIdRef.current) return
+        setRowTimestampLocally(payload.rowId, payload.lastUpdatedAt)
       })
       .on('broadcast', { event: 'slider-added' }, ({ payload }) => {
         if (!payload || payload.senderId === clientIdRef.current) return
@@ -354,15 +362,6 @@ export default function App() {
     if (error) setError(error.message)
   }
 
-  async function saveLastUpdatedAt(timestamp) {
-    const { error } = await supabase
-      .from('boards')
-      .update({ last_updated_at: timestamp })
-      .eq('id', BOARD_ID)
-
-    if (error) setError(error.message)
-  }
-
   async function saveRowName(rowId, name) {
     const { error } = await supabase
       .from('rows')
@@ -385,6 +384,15 @@ export default function App() {
     const { error } = await supabase
       .from('rows')
       .update({ want_to_talk: wantToTalk })
+      .eq('id', rowId)
+
+    if (error) setError(error.message)
+  }
+
+  async function saveRowTimestamp(rowId, timestamp) {
+    const { error } = await supabase
+      .from('rows')
+      .update({ last_updated_at: timestamp })
       .eq('id', rowId)
 
     if (error) setError(error.message)
@@ -547,11 +555,14 @@ export default function App() {
     await saveSliderTalk(sliderId, nextValue)
   }
 
-  async function updateTimestampNow() {
+  async function updateRowTimestampNow(rowId) {
     const now = new Date().toISOString()
-    setBoard((prev) => ({ ...(prev || {}), last_updated_at: now }))
-    await broadcastEvent('board-timestamp', { lastUpdatedAt: now })
-    await saveLastUpdatedAt(now)
+    setRowTimestampLocally(rowId, now)
+    await broadcastEvent('row-timestamp', {
+      rowId,
+      lastUpdatedAt: now,
+    })
+    await saveRowTimestamp(rowId, now)
   }
 
   async function savePalette(row) {
@@ -734,15 +745,6 @@ export default function App() {
               <div style={styles.metaPill}>Palettes: {profiles.length}</div>
               {saving && <div style={styles.metaPill}>Saving...</div>}
             </div>
-
-            <div style={styles.timestampRow}>
-              <div style={styles.timestampText}>
-                Last updated at: {formatTimestamp(board?.last_updated_at)}
-              </div>
-              <button className="button-soft" onClick={updateTimestampNow}>
-                Update timestamp
-              </button>
-            </div>
           </div>
 
           <div style={styles.actionRow}>
@@ -801,6 +803,15 @@ export default function App() {
                         <button className="button-soft" onClick={() => savePalette(row)}>Save palette</button>
                         <button className="button-danger" onClick={() => removeRow(row.id)}>Remove row</button>
                       </div>
+                    </div>
+
+                    <div style={styles.timestampRow}>
+                      <div style={styles.timestampText}>
+                        Last updated at: {formatTimestamp(row.last_updated_at)}
+                      </div>
+                      <button className="button-soft" onClick={() => updateRowTimestampNow(row.id)}>
+                        Update timestamp
+                      </button>
                     </div>
 
                     <div style={styles.talkToggleRow}>
@@ -1151,7 +1162,6 @@ const styles = {
     flexWrap: 'wrap',
     gap: 12,
     alignItems: 'center',
-    marginTop: 14,
   },
   timestampText: {
     padding: '8px 12px',
