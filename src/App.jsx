@@ -55,18 +55,39 @@ export default function App() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [showAverages, setShowAverages] = useState(() => {
+    const saved = localStorage.getItem('show-row-averages')
+    return saved === null ? true : saved === 'true'
+  })
 
   const channelRef = useRef(null)
   const clientIdRef = useRef(crypto.randomUUID())
 
   const rowsWithSliders = useMemo(() => {
-    return rows.map((row) => ({
-      ...row,
-      sliders: sliders
+    return rows.map((row) => {
+      const rowSliders = sliders
         .filter((slider) => slider.row_id === row.id)
-        .sort((a, b) => a.position - b.position),
-    }))
+        .sort((a, b) => a.position - b.position)
+
+      const average =
+        rowSliders.length === 0
+          ? 0
+          : Math.round(
+              rowSliders.reduce((sum, slider) => sum + clampValue(slider.value), 0) /
+                rowSliders.length
+            )
+
+      return {
+        ...row,
+        sliders: rowSliders,
+        average,
+      }
+    })
   }, [rows, sliders])
+
+  useEffect(() => {
+    localStorage.setItem('show-row-averages', String(showAverages))
+  }, [showAverages])
 
   function setSliderValueLocally(sliderId, value) {
     const nextValue = clampValue(value)
@@ -593,6 +614,12 @@ export default function App() {
 
           <div style={styles.actionRow}>
             <button className="button-soft" onClick={addRow}>Add row</button>
+            <button
+              className="button-soft"
+              onClick={() => setShowAverages((prev) => !prev)}
+            >
+              {showAverages ? 'Hide averages' : 'Show averages'}
+            </button>
             <button className="button-soft" onClick={() => loadBoardData(true)}>Refresh</button>
           </div>
         </div>
@@ -616,17 +643,25 @@ export default function App() {
                 <div key={row.id} style={styles.rowCard}>
                   <div style={styles.rowHeader}>
                     <div style={styles.rowHeaderTop}>
-                      <input
-                        className="hover-edit"
-                        style={styles.rowTitle}
-                        value={row.name}
-                        onChange={async (e) => {
-                          const name = e.target.value
-                          setRowNameLocally(row.id, name)
-                          await broadcastEvent('row-name', { rowId: row.id, name })
-                        }}
-                        onBlur={(e) => saveRowName(row.id, e.target.value)}
-                      />
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <input
+                          className="hover-edit"
+                          style={styles.rowTitle}
+                          value={row.name}
+                          onChange={async (e) => {
+                            const name = e.target.value
+                            setRowNameLocally(row.id, name)
+                            await broadcastEvent('row-name', { rowId: row.id, name })
+                          }}
+                          onBlur={(e) => saveRowName(row.id, e.target.value)}
+                        />
+
+                        {showAverages && (
+                          <div style={styles.averagePill}>
+                            Average: {row.average}
+                          </div>
+                        )}
+                      </div>
 
                       <div style={styles.actionRow}>
                         <button className="button-soft" onClick={() => addSlider(row)}>Add slider</button>
@@ -893,6 +928,15 @@ const styles = {
     marginTop: 14,
   },
   metaPill: {
+    padding: '8px 12px',
+    borderRadius: 999,
+    border: '1px solid rgba(255,255,255,0.12)',
+    background: 'rgba(0,0,0,0.24)',
+    fontSize: 14,
+    color: '#d4d4d8',
+  },
+  averagePill: {
+    alignSelf: 'flex-start',
     padding: '8px 12px',
     borderRadius: 999,
     border: '1px solid rgba(255,255,255,0.12)',
