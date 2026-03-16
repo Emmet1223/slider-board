@@ -135,6 +135,14 @@ export default function App() {
     )
   }
 
+  function setRowWantToTalkLocally(rowId, wantToTalk) {
+    setRows((prev) =>
+      prev.map((row) =>
+        row.id === rowId ? { ...row, want_to_talk: wantToTalk } : row
+      )
+    )
+  }
+
   function addRowLocally(row) {
     setRows((prev) => {
       if (prev.some((r) => r.id === row.id)) return prev
@@ -258,6 +266,10 @@ export default function App() {
         if (!payload || payload.senderId === clientIdRef.current) return
         setRowColorLocally(payload.rowId, payload.key, payload.value)
       })
+      .on('broadcast', { event: 'row-want-to-talk' }, ({ payload }) => {
+        if (!payload || payload.senderId === clientIdRef.current) return
+        setRowWantToTalkLocally(payload.rowId, payload.wantToTalk)
+      })
       .on('broadcast', { event: 'slider-added' }, ({ payload }) => {
         if (!payload || payload.senderId === clientIdRef.current) return
         addSliderLocally(payload.slider)
@@ -330,6 +342,15 @@ export default function App() {
     if (error) setError(error.message)
   }
 
+  async function saveRowWantToTalk(rowId, wantToTalk) {
+    const { error } = await supabase
+      .from('rows')
+      .update({ want_to_talk: wantToTalk })
+      .eq('id', rowId)
+
+    if (error) setError(error.message)
+  }
+
   async function saveSliderLabel(sliderId, label) {
     const { error } = await supabase
       .from('sliders')
@@ -388,6 +409,7 @@ export default function App() {
         low_color: '#ef4444',
         medium_color: '#f59e0b',
         high_color: '#22c55e',
+        want_to_talk: false,
       })
       .select()
       .single()
@@ -704,6 +726,36 @@ export default function App() {
                         <button className="button-soft" onClick={() => savePalette(row)}>Save palette</button>
                         <button className="button-danger" onClick={() => removeRow(row.id)}>Remove row</button>
                       </div>
+                    </div>
+
+                    <div style={styles.talkToggleRow}>
+                      <span style={styles.talkToggleLabel}>Want to talk?</span>
+
+                      <button
+                        className="button-soft"
+                        style={{
+                          ...styles.talkToggleButton,
+                          background: row.want_to_talk ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.06)',
+                          borderColor: row.want_to_talk ? 'rgba(34,197,94,0.45)' : 'rgba(255,255,255,0.12)',
+                        }}
+                        onClick={async () => {
+                          const nextValue = !row.want_to_talk
+                          setRowWantToTalkLocally(row.id, nextValue)
+                          await broadcastEvent('row-want-to-talk', {
+                            rowId: row.id,
+                            wantToTalk: nextValue,
+                          })
+                          await saveRowWantToTalk(row.id, nextValue)
+                        }}
+                        title="Toggle want to talk"
+                      >
+                        <div
+                          style={{
+                            ...styles.talkToggleKnob,
+                            transform: row.want_to_talk ? 'translateX(24px)' : 'translateX(0px)',
+                          }}
+                        />
+                      </button>
                     </div>
 
                     <div style={styles.paletteControls}>
@@ -1038,6 +1090,35 @@ const styles = {
     fontWeight: 700,
     padding: '8px 12px',
     minWidth: 180,
+  },
+  talkToggleRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    padding: '0 4px',
+  },
+  talkToggleLabel: {
+    fontSize: 15,
+    color: '#e4e4e7',
+    fontWeight: 600,
+  },
+  talkToggleButton: {
+    width: 56,
+    height: 32,
+    padding: 4,
+    borderRadius: 999,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    transition: '0.15s ease',
+  },
+  talkToggleKnob: {
+    width: 20,
+    height: 20,
+    borderRadius: '50%',
+    background: 'white',
+    transition: '0.15s ease',
   },
   paletteControls: {
     display: 'flex',
