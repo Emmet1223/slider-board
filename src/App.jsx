@@ -1246,15 +1246,15 @@ const styles = {
     minHeight: '100vh',
     background: 'linear-gradient(135deg, #09090b 0%, #111827 50%, #000000 100%)',
     color: 'white',
-    padding: 24,
+    padding: 14,
     fontFamily: 'Arial, sans-serif',
   },
   appShell: {
-    maxWidth: 1900,
+    maxWidth: 2100,
     margin: '0 auto',
     display: 'grid',
-    gridTemplateColumns: 'minmax(0, 1fr) 360px',
-    gap: 20,
+    gridTemplateColumns: 'minmax(0, 1fr) 340px',
+    gap: 16,
     alignItems: 'start',
   },
   mainColumn: {
@@ -1344,6 +1344,9 @@ const styles = {
   noteDeleteButton: {
     padding: '6px 10px',
     fontSize: 12,
+    color: '#3f2f0a',
+    borderColor: 'rgba(63,47,10,0.28)',
+    background: 'rgba(63,47,10,0.08)',
   },
   topCard: {
     display: 'flex',
