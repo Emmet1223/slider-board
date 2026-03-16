@@ -51,6 +51,20 @@ function clampValue(value) {
   return Math.max(0, Math.min(100, Number(value) || 0))
 }
 
+function formatTimestamp(value) {
+  if (!value) return 'Never'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Invalid date'
+
+  return date.toLocaleString([], {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  })
+}
+
 export default function App() {
   const [board, setBoard] = useState(null)
   const [rows, setRows] = useState([])
@@ -115,6 +129,14 @@ export default function App() {
     setSliders((prev) =>
       prev.map((slider) =>
         slider.id === sliderId ? { ...slider, reversed } : slider
+      )
+    )
+  }
+
+  function setSliderTalkLocally(sliderId, talk) {
+    setSliders((prev) =>
+      prev.map((slider) =>
+        slider.id === sliderId ? { ...slider, talk } : slider
       )
     )
   }
@@ -250,6 +272,10 @@ export default function App() {
         if (!payload || payload.senderId === clientIdRef.current) return
         setBoard((prev) => ({ ...(prev || {}), title: payload.title }))
       })
+      .on('broadcast', { event: 'board-timestamp' }, ({ payload }) => {
+        if (!payload || payload.senderId === clientIdRef.current) return
+        setBoard((prev) => ({ ...(prev || {}), last_updated_at: payload.lastUpdatedAt }))
+      })
       .on('broadcast', { event: 'row-added' }, ({ payload }) => {
         if (!payload || payload.senderId === clientIdRef.current) return
         addRowLocally(payload.row)
@@ -290,6 +316,10 @@ export default function App() {
         if (!payload || payload.senderId === clientIdRef.current) return
         setSliderReversedLocally(payload.sliderId, payload.reversed)
       })
+      .on('broadcast', { event: 'slider-talk' }, ({ payload }) => {
+        if (!payload || payload.senderId === clientIdRef.current) return
+        setSliderTalkLocally(payload.sliderId, payload.talk)
+      })
       .subscribe()
 
     channelRef.current = channel
@@ -319,6 +349,15 @@ export default function App() {
     const { error } = await supabase
       .from('boards')
       .update({ title })
+      .eq('id', BOARD_ID)
+
+    if (error) setError(error.message)
+  }
+
+  async function saveLastUpdatedAt(timestamp) {
+    const { error } = await supabase
+      .from('boards')
+      .update({ last_updated_at: timestamp })
       .eq('id', BOARD_ID)
 
     if (error) setError(error.message)
@@ -375,6 +414,15 @@ export default function App() {
     const { error } = await supabase
       .from('sliders')
       .update({ reversed })
+      .eq('id', sliderId)
+
+    if (error) setError(error.message)
+  }
+
+  async function saveSliderTalk(sliderId, talk) {
+    const { error } = await supabase
+      .from('sliders')
+      .update({ talk })
       .eq('id', sliderId)
 
     if (error) setError(error.message)
@@ -450,6 +498,7 @@ export default function App() {
         value: 50,
         position: nextPosition,
         reversed: false,
+        talk: false,
       })
       .select()
       .single()
@@ -486,6 +535,23 @@ export default function App() {
       reversed: nextValue,
     })
     await saveSliderReversed(sliderId, nextValue)
+  }
+
+  async function toggleSliderTalk(sliderId, currentValue) {
+    const nextValue = !currentValue
+    setSliderTalkLocally(sliderId, nextValue)
+    await broadcastEvent('slider-talk', {
+      sliderId,
+      talk: nextValue,
+    })
+    await saveSliderTalk(sliderId, nextValue)
+  }
+
+  async function updateTimestampNow() {
+    const now = new Date().toISOString()
+    setBoard((prev) => ({ ...(prev || {}), last_updated_at: now }))
+    await broadcastEvent('board-timestamp', { lastUpdatedAt: now })
+    await saveLastUpdatedAt(now)
   }
 
   async function savePalette(row) {
@@ -667,6 +733,15 @@ export default function App() {
               <div style={styles.metaPill}>Sliders: {sliders.length}</div>
               <div style={styles.metaPill}>Palettes: {profiles.length}</div>
               {saving && <div style={styles.metaPill}>Saving...</div>}
+            </div>
+
+            <div style={styles.timestampRow}>
+              <div style={styles.timestampText}>
+                Last updated at: {formatTimestamp(board?.last_updated_at)}
+              </div>
+              <button className="button-soft" onClick={updateTimestampNow}>
+                Update timestamp
+              </button>
             </div>
           </div>
 
@@ -947,6 +1022,27 @@ export default function App() {
                               style={{ width: 80, textAlign: 'center' }}
                             />
                           </div>
+
+                          <div style={styles.sliderTalkRow}>
+                            <span style={styles.smallLabel}>Talk?</span>
+                            <button
+                              className="button-soft"
+                              style={{
+                                ...styles.smallTalkToggleButton,
+                                background: slider.talk ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.06)',
+                                borderColor: slider.talk ? 'rgba(34,197,94,0.45)' : 'rgba(255,255,255,0.12)',
+                              }}
+                              onClick={() => toggleSliderTalk(slider.id, !!slider.talk)}
+                              title="Toggle talk"
+                            >
+                              <div
+                                style={{
+                                  ...styles.smallTalkToggleKnob,
+                                  transform: slider.talk ? 'translateX(18px)' : 'translateX(0px)',
+                                }}
+                              />
+                            </button>
+                          </div>
                         </div>
                       )
                     })}
@@ -1043,6 +1139,21 @@ const styles = {
     marginTop: 14,
   },
   metaPill: {
+    padding: '8px 12px',
+    borderRadius: 999,
+    border: '1px solid rgba(255,255,255,0.12)',
+    background: 'rgba(0,0,0,0.24)',
+    fontSize: 14,
+    color: '#d4d4d8',
+  },
+  timestampRow: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: 12,
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  timestampText: {
     padding: '8px 12px',
     borderRadius: 999,
     border: '1px solid rgba(255,255,255,0.12)',
@@ -1190,6 +1301,31 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
+  },
+  sliderTalkRow: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingTop: 2,
+  },
+  smallTalkToggleButton: {
+    width: 46,
+    height: 28,
+    padding: 4,
+    borderRadius: 999,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-start',
+    transition: '0.15s ease',
+  },
+  smallTalkToggleKnob: {
+    width: 16,
+    height: 16,
+    borderRadius: '50%',
+    background: 'white',
+    transition: '0.15s ease',
   },
   smallLabel: {
     fontSize: 13,
