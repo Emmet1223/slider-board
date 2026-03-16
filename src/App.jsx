@@ -85,7 +85,7 @@ export default function App() {
   const [saving, setSaving] = useState(false)
   const [showAverages, setShowAverages] = useState(() => {
     const saved = localStorage.getItem('show-row-averages')
-    return saved === null ? true : saved === 'true'
+    return saved === null ? false : saved === 'true'
   })
 
   const channelRef = useRef(null)
@@ -896,7 +896,17 @@ export default function App() {
                         <div style={styles.actionRow}>
                           <button className="button-soft" onClick={() => addSlider(row)}>Add slider</button>
                           <button className="button-soft" onClick={() => savePalette(row)}>Save palette</button>
-                          <button className="button-danger" onClick={() => removeRow(row.id)}>Remove row</button>
+                          <button
+                            className="button-danger"
+                            onClick={() => {
+                              const confirmed = window.confirm(`Remove "${row.name}" and all of its sliders?`)
+                              if (confirmed) {
+                                removeRow(row.id)
+                              }
+                            }}
+                          >
+                            Remove row
+                          </button>
                         </div>
                       </div>
 
