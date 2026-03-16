@@ -757,7 +757,23 @@ export default function App() {
 
                       return (
                         <div key={slider.id} style={styles.sliderCard}>
-                          <div style={{ display: 'flex', justifyContent: 'flex-end', width: '100%' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                            <button
+                              className="button-soft"
+                              style={styles.iconButton}
+                              onClick={async () => {
+                                setSliderValueLocally(slider.id, 50)
+                                await broadcastEvent('slider-move', {
+                                  sliderId: slider.id,
+                                  value: 50,
+                                })
+                                await saveSliderValue(slider.id, 50)
+                              }}
+                              title="Reset slider"
+                            >
+                              ↺
+                            </button>
+
                             <button
                               className="button-danger"
                               style={styles.iconButton}
