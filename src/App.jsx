@@ -65,11 +65,21 @@ function formatTimestamp(value) {
   })
 }
 
+function sortNewestFirst(items) {
+  return [...items].sort((a, b) => {
+    const aTime = new Date(a.created_at || 0).getTime()
+    const bTime = new Date(b.created_at || 0).getTime()
+    return bTime - aTime
+  })
+}
+
 export default function App() {
   const [board, setBoard] = useState(null)
   const [rows, setRows] = useState([])
   const [sliders, setSliders] = useState([])
   const [profiles, setProfiles] = useState([])
+  const [notes, setNotes] = useState([])
+  const [noteDraft, setNoteDraft] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -196,6 +206,14 @@ export default function App() {
     setSliders((prev) => prev.filter((slider) => slider.id !== sliderId))
   }
 
+  function addNoteLocally(note) {
+    setNotes((prev) => sortNewestFirst([note, ...prev.filter((n) => n.id !== note.id)]))
+  }
+
+  function removeNoteLocally(noteId) {
+    setNotes((prev) => prev.filter((note) => note.id !== noteId))
+  }
+
   async function loadBoardData(showLoading = true) {
     if (showLoading) {
       setLoading(true)
@@ -258,10 +276,23 @@ export default function App() {
       return
     }
 
+    const { data: notesData, error: notesError } = await supabase
+      .from('notes')
+      .select('*')
+      .eq('board_id', BOARD_ID)
+      .order('created_at', { ascending: false })
+
+    if (notesError) {
+      setError(notesError.message)
+      if (showLoading) setLoading(false)
+      return
+    }
+
     setBoard(boardData)
     setRows(rowData || [])
     setSliders(sliderData)
     setProfiles(profileData || [])
+    setNotes(notesData || [])
 
     if (showLoading) {
       setLoading(false)
@@ -327,6 +358,14 @@ export default function App() {
       .on('broadcast', { event: 'slider-talk' }, ({ payload }) => {
         if (!payload || payload.senderId === clientIdRef.current) return
         setSliderTalkLocally(payload.sliderId, payload.talk)
+      })
+      .on('broadcast', { event: 'note-added' }, ({ payload }) => {
+        if (!payload || payload.senderId === clientIdRef.current) return
+        addNoteLocally(payload.note)
+      })
+      .on('broadcast', { event: 'note-removed' }, ({ payload }) => {
+        if (!payload || payload.senderId === clientIdRef.current) return
+        removeNoteLocally(payload.noteId)
       })
       .subscribe()
 
@@ -565,6 +604,44 @@ export default function App() {
     await saveRowTimestamp(rowId, now)
   }
 
+  async function postNote() {
+    const content = noteDraft.trim()
+    if (!content) return
+
+    const { data, error } = await supabase
+      .from('notes')
+      .insert({
+        board_id: BOARD_ID,
+        content,
+      })
+      .select()
+      .single()
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    setNoteDraft('')
+    addNoteLocally(data)
+    await broadcastEvent('note-added', { note: data })
+  }
+
+  async function deleteNote(noteId) {
+    const { error } = await supabase
+      .from('notes')
+      .delete()
+      .eq('id', noteId)
+
+    if (error) {
+      setError(error.message)
+      return
+    }
+
+    removeNoteLocally(noteId)
+    await broadcastEvent('note-removed', { noteId })
+  }
+
   async function savePalette(row) {
     await runAndReload(() =>
       supabase
@@ -711,6 +788,10 @@ export default function App() {
         }
 
         @media (max-width: 900px) {
+          .app-shell {
+            grid-template-columns: 1fr !important;
+          }
+
           .slider-grid-fixed {
             grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
           }
@@ -723,389 +804,438 @@ export default function App() {
         }
       `}</style>
 
-      <div style={styles.container}>
-        <div style={styles.topCard}>
-          <div>
-            <input
-              className="hover-edit"
-              style={styles.boardTitle}
-              value={board?.title || ''}
-              onChange={async (e) => {
-                const title = e.target.value
-                setBoard((prev) => ({ ...(prev || {}), title }))
-                await broadcastEvent('board-title', { title })
-              }}
-              onBlur={(e) => saveBoardTitle(e.target.value)}
-              placeholder="Board title"
-            />
+      <div className="app-shell" style={styles.appShell}>
+        <div style={styles.mainColumn}>
+          <div style={styles.topCard}>
+            <div>
+              <input
+                className="hover-edit"
+                style={styles.boardTitle}
+                value={board?.title || ''}
+                onChange={async (e) => {
+                  const title = e.target.value
+                  setBoard((prev) => ({ ...(prev || {}), title }))
+                  await broadcastEvent('board-title', { title })
+                }}
+                onBlur={(e) => saveBoardTitle(e.target.value)}
+                placeholder="Board title"
+              />
 
-            <div style={styles.metaRow}>
-              <div style={styles.metaPill}>Rows: {rows.length}</div>
-              <div style={styles.metaPill}>Sliders: {sliders.length}</div>
-              <div style={styles.metaPill}>Palettes: {profiles.length}</div>
-              {saving && <div style={styles.metaPill}>Saving...</div>}
+              <div style={styles.metaRow}>
+                <div style={styles.metaPill}>Rows: {rows.length}</div>
+                <div style={styles.metaPill}>Sliders: {sliders.length}</div>
+                <div style={styles.metaPill}>Palettes: {profiles.length}</div>
+                <div style={styles.metaPill}>Notes: {notes.length}</div>
+                {saving && <div style={styles.metaPill}>Saving...</div>}
+              </div>
+            </div>
+
+            <div style={styles.actionRow}>
+              <button className="button-soft" onClick={addRow}>Add row</button>
+              <button
+                className="button-soft"
+                onClick={() => setShowAverages((prev) => !prev)}
+              >
+                {showAverages ? 'Hide averages' : 'Show averages'}
+              </button>
+              <button className="button-soft" onClick={() => loadBoardData(true)}>Refresh</button>
             </div>
           </div>
 
-          <div style={styles.actionRow}>
-            <button className="button-soft" onClick={addRow}>Add row</button>
-            <button
-              className="button-soft"
-              onClick={() => setShowAverages((prev) => !prev)}
-            >
-              {showAverages ? 'Hide averages' : 'Show averages'}
-            </button>
-            <button className="button-soft" onClick={() => loadBoardData(true)}>Refresh</button>
-          </div>
-        </div>
+          {error && (
+            <div style={styles.errorBox}>
+              {error}
+            </div>
+          )}
 
-        {error && (
-          <div style={styles.errorBox}>
-            {error}
-          </div>
-        )}
-
-        {loading ? (
-          <div style={styles.emptyCard}>Loading board...</div>
-        ) : (
-          <>
-            {rowsWithSliders.length === 0 ? (
-              <div style={styles.emptyCard}>
-                No rows yet. Click <strong>Add row</strong> to make your first one.
-              </div>
-            ) : (
-              rowsWithSliders.map((row) => (
-                <div key={row.id} style={styles.rowCard}>
-                  <div style={styles.rowHeader}>
-                    <div style={styles.rowHeaderTop}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        <input
-                          className="hover-edit"
-                          style={styles.rowTitle}
-                          value={row.name}
-                          onChange={async (e) => {
-                            const name = e.target.value
-                            setRowNameLocally(row.id, name)
-                            await broadcastEvent('row-name', { rowId: row.id, name })
-                          }}
-                          onBlur={(e) => saveRowName(row.id, e.target.value)}
-                        />
-
-                        {showAverages && (
-                          <div style={styles.averagePill}>
-                            Average: {row.average}
-                          </div>
-                        )}
-                      </div>
-
-                      <div style={styles.actionRow}>
-                        <button className="button-soft" onClick={() => addSlider(row)}>Add slider</button>
-                        <button className="button-soft" onClick={() => savePalette(row)}>Save palette</button>
-                        <button className="button-danger" onClick={() => removeRow(row.id)}>Remove row</button>
-                      </div>
-                    </div>
-
-                    <div style={styles.timestampRow}>
-                      <div style={styles.timestampText}>
-                        Last updated at: {formatTimestamp(row.last_updated_at)}
-                      </div>
-                      <button className="button-soft" onClick={() => updateRowTimestampNow(row.id)}>
-                        Update timestamp
-                      </button>
-                    </div>
-
-                    <div style={styles.talkToggleRow}>
-                      <span style={styles.talkToggleLabel}>Want to talk?</span>
-
-                      <button
-                        className="button-soft"
-                        style={{
-                          ...styles.talkToggleButton,
-                          background: row.want_to_talk ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.06)',
-                          borderColor: row.want_to_talk ? 'rgba(34,197,94,0.45)' : 'rgba(255,255,255,0.12)',
-                        }}
-                        onClick={async () => {
-                          const nextValue = !row.want_to_talk
-                          setRowWantToTalkLocally(row.id, nextValue)
-                          await broadcastEvent('row-want-to-talk', {
-                            rowId: row.id,
-                            wantToTalk: nextValue,
-                          })
-                          await saveRowWantToTalk(row.id, nextValue)
-                        }}
-                        title="Toggle want to talk"
-                      >
-                        <div
-                          style={{
-                            ...styles.talkToggleKnob,
-                            transform: row.want_to_talk ? 'translateX(24px)' : 'translateX(0px)',
-                          }}
-                        />
-                      </button>
-                    </div>
-
-                    <div style={styles.paletteControls}>
-                      <label style={styles.colorLabel}>
-                        <span>Low</span>
-                        <input
-                          type="color"
-                          value={row.low_color}
-                          onChange={async (e) => {
-                            setRowColorLocally(row.id, 'low_color', e.target.value)
-                            await broadcastEvent('row-color', {
-                              rowId: row.id,
-                              key: 'low_color',
-                              value: e.target.value,
-                            })
-                            await saveRowColor(row.id, 'low_color', e.target.value)
-                          }}
-                        />
-                      </label>
-
-                      <label style={styles.colorLabel}>
-                        <span>Medium</span>
-                        <input
-                          type="color"
-                          value={row.medium_color}
-                          onChange={async (e) => {
-                            setRowColorLocally(row.id, 'medium_color', e.target.value)
-                            await broadcastEvent('row-color', {
-                              rowId: row.id,
-                              key: 'medium_color',
-                              value: e.target.value,
-                            })
-                            await saveRowColor(row.id, 'medium_color', e.target.value)
-                          }}
-                        />
-                      </label>
-
-                      <label style={styles.colorLabel}>
-                        <span>High</span>
-                        <input
-                          type="color"
-                          value={row.high_color}
-                          onChange={async (e) => {
-                            setRowColorLocally(row.id, 'high_color', e.target.value)
-                            await broadcastEvent('row-color', {
-                              rowId: row.id,
-                              key: 'high_color',
-                              value: e.target.value,
-                            })
-                            await saveRowColor(row.id, 'high_color', e.target.value)
-                          }}
-                        />
-                      </label>
-
-                      <div style={{ marginLeft: 'auto', minWidth: 220 }}>
-                        <div style={styles.smallLabel}>Apply saved palette</div>
-                        <select
-                          className="select-soft"
-                          defaultValue=""
-                          onChange={(e) => {
-                            if (!e.target.value) return
-                            applyPaletteToRow(row.id, e.target.value)
-                            e.target.value = ''
-                          }}
-                          style={{ width: '100%' }}
-                        >
-                          <option value="">Choose a palette...</option>
-                          {profiles.map((profile) => (
-                            <option key={profile.id} value={profile.id}>
-                              {profile.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="slider-grid-fixed" style={styles.sliderGrid}>
-                    {row.sliders.map((slider) => {
-                      const rowColors = {
-                        low_color: row.low_color,
-                        medium_color: row.medium_color,
-                        high_color: row.high_color,
-                      }
-
-                      const sliderColor = valueToColor(slider.value, rowColors, slider.reversed)
-
-                      return (
-                        <div key={slider.id} style={styles.sliderCard}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
-                            <button
-                              className="button-soft"
-                              style={styles.iconButton}
-                              onClick={async () => {
-                                setSliderValueLocally(slider.id, 50)
-                                await broadcastEvent('slider-move', {
-                                  sliderId: slider.id,
-                                  value: 50,
-                                })
-                                await saveSliderValue(slider.id, 50)
-                              }}
-                              title="Reset slider"
-                            >
-                              ↺
-                            </button>
-
-                            <button
-                              className="button-danger"
-                              style={styles.iconButton}
-                              onClick={() => removeSlider(slider.id)}
-                              title="Remove slider"
-                            >
-                              ×
-                            </button>
-                          </div>
-
-                          <div style={styles.sliderWrap}>
-                            <input
-                              className="slider-vertical"
-                              type="range"
-                              min="0"
-                              max="100"
-                              value={slider.value}
-                              onChange={async (e) => {
-                                const nextValue = clampValue(e.target.value)
-                                setSliderValueLocally(slider.id, nextValue)
-                                await broadcastEvent('slider-move', {
-                                  sliderId: slider.id,
-                                  value: nextValue,
-                                })
-                              }}
-                              onMouseUp={(e) => saveSliderValue(slider.id, e.target.value)}
-                              onTouchEnd={(e) => saveSliderValue(slider.id, e.target.value)}
-                              style={{ '--slider-color': sliderColor }}
-                            />
-                          </div>
-
-                          <div
-                            style={{
-                              ...styles.colorBar,
-                              background: sliderColor,
-                              boxShadow: `0 0 18px ${sliderColor}`,
+          {loading ? (
+            <div style={styles.emptyCard}>Loading board...</div>
+          ) : (
+            <>
+              {rowsWithSliders.length === 0 ? (
+                <div style={styles.emptyCard}>
+                  No rows yet. Click <strong>Add row</strong> to make your first one.
+                </div>
+              ) : (
+                rowsWithSliders.map((row) => (
+                  <div key={row.id} style={styles.rowCard}>
+                    <div style={styles.rowHeader}>
+                      <div style={styles.rowHeaderTop}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                          <input
+                            className="hover-edit"
+                            style={styles.rowTitle}
+                            value={row.name}
+                            onChange={async (e) => {
+                              const name = e.target.value
+                              setRowNameLocally(row.id, name)
+                              await broadcastEvent('row-name', { rowId: row.id, name })
                             }}
+                            onBlur={(e) => saveRowName(row.id, e.target.value)}
                           />
 
-                          <div style={styles.sliderLabelRow}>
-                            <input
-                              className="hover-edit"
-                              style={styles.sliderLabel}
-                              value={slider.label}
-                              onChange={async (e) => {
-                                const label = e.target.value
-                                setSliderLabelLocally(slider.id, label)
-                                await broadcastEvent('slider-label', {
-                                  sliderId: slider.id,
-                                  label,
-                                })
-                              }}
-                              onBlur={(e) => saveSliderLabel(slider.id, e.target.value)}
-                            />
-
-                            <button
-                              className="button-soft"
-                              style={styles.reverseButton}
-                              onClick={() => toggleSliderReversed(slider.id, !!slider.reversed)}
-                              title="Reverse gradient"
-                            >
-                              {slider.reversed ? '⇄' : '↔'}
-                            </button>
-                          </div>
-
-                          <div style={styles.valueRow}>
-                            <span style={styles.smallLabel}>Value</span>
-                            <input
-                              className="input-soft"
-                              type="number"
-                              min="0"
-                              max="100"
-                              value={slider.value}
-                              onChange={async (e) => {
-                                const nextValue = clampValue(e.target.value)
-                                setSliderValueLocally(slider.id, nextValue)
-                                await broadcastEvent('slider-move', {
-                                  sliderId: slider.id,
-                                  value: nextValue,
-                                })
-                              }}
-                              onBlur={(e) => saveSliderValue(slider.id, e.target.value)}
-                              style={{ width: 80, textAlign: 'center' }}
-                            />
-                          </div>
-
-                          <div style={styles.sliderTalkRow}>
-                            <span style={styles.smallLabel}>Talk?</span>
-                            <button
-                              className="button-soft"
-                              style={{
-                                ...styles.smallTalkToggleButton,
-                                background: slider.talk ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.06)',
-                                borderColor: slider.talk ? 'rgba(34,197,94,0.45)' : 'rgba(255,255,255,0.12)',
-                              }}
-                              onClick={() => toggleSliderTalk(slider.id, !!slider.talk)}
-                              title="Toggle talk"
-                            >
-                              <div
-                                style={{
-                                  ...styles.smallTalkToggleKnob,
-                                  transform: slider.talk ? 'translateX(18px)' : 'translateX(0px)',
-                                }}
-                              />
-                            </button>
-                          </div>
+                          {showAverages && (
+                            <div style={styles.averagePill}>
+                              Average: {row.average}
+                            </div>
+                          )}
                         </div>
-                      )
-                    })}
+
+                        <div style={styles.actionRow}>
+                          <button className="button-soft" onClick={() => addSlider(row)}>Add slider</button>
+                          <button className="button-soft" onClick={() => savePalette(row)}>Save palette</button>
+                          <button className="button-danger" onClick={() => removeRow(row.id)}>Remove row</button>
+                        </div>
+                      </div>
+
+                      <div style={styles.timestampRow}>
+                        <div style={styles.timestampText}>
+                          Last updated at: {formatTimestamp(row.last_updated_at)}
+                        </div>
+                        <button className="button-soft" onClick={() => updateRowTimestampNow(row.id)}>
+                          Update timestamp
+                        </button>
+                      </div>
+
+                      <div style={styles.talkToggleRow}>
+                        <span style={styles.talkToggleLabel}>Want to talk?</span>
+
+                        <button
+                          className="button-soft"
+                          style={{
+                            ...styles.talkToggleButton,
+                            background: row.want_to_talk ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.06)',
+                            borderColor: row.want_to_talk ? 'rgba(34,197,94,0.45)' : 'rgba(255,255,255,0.12)',
+                          }}
+                          onClick={async () => {
+                            const nextValue = !row.want_to_talk
+                            setRowWantToTalkLocally(row.id, nextValue)
+                            await broadcastEvent('row-want-to-talk', {
+                              rowId: row.id,
+                              wantToTalk: nextValue,
+                            })
+                            await saveRowWantToTalk(row.id, nextValue)
+                          }}
+                          title="Toggle want to talk"
+                        >
+                          <div
+                            style={{
+                              ...styles.talkToggleKnob,
+                              transform: row.want_to_talk ? 'translateX(24px)' : 'translateX(0px)',
+                            }}
+                          />
+                        </button>
+                      </div>
+
+                      <div style={styles.paletteControls}>
+                        <label style={styles.colorLabel}>
+                          <span>Low</span>
+                          <input
+                            type="color"
+                            value={row.low_color}
+                            onChange={async (e) => {
+                              setRowColorLocally(row.id, 'low_color', e.target.value)
+                              await broadcastEvent('row-color', {
+                                rowId: row.id,
+                                key: 'low_color',
+                                value: e.target.value,
+                              })
+                              await saveRowColor(row.id, 'low_color', e.target.value)
+                            }}
+                          />
+                        </label>
+
+                        <label style={styles.colorLabel}>
+                          <span>Medium</span>
+                          <input
+                            type="color"
+                            value={row.medium_color}
+                            onChange={async (e) => {
+                              setRowColorLocally(row.id, 'medium_color', e.target.value)
+                              await broadcastEvent('row-color', {
+                                rowId: row.id,
+                                key: 'medium_color',
+                                value: e.target.value,
+                              })
+                              await saveRowColor(row.id, 'medium_color', e.target.value)
+                            }}
+                          />
+                        </label>
+
+                        <label style={styles.colorLabel}>
+                          <span>High</span>
+                          <input
+                            type="color"
+                            value={row.high_color}
+                            onChange={async (e) => {
+                              setRowColorLocally(row.id, 'high_color', e.target.value)
+                              await broadcastEvent('row-color', {
+                                rowId: row.id,
+                                key: 'high_color',
+                                value: e.target.value,
+                              })
+                              await saveRowColor(row.id, 'high_color', e.target.value)
+                            }}
+                          />
+                        </label>
+
+                        <div style={{ marginLeft: 'auto', minWidth: 220 }}>
+                          <div style={styles.smallLabel}>Apply saved palette</div>
+                          <select
+                            className="select-soft"
+                            defaultValue=""
+                            onChange={(e) => {
+                              if (!e.target.value) return
+                              applyPaletteToRow(row.id, e.target.value)
+                              e.target.value = ''
+                            }}
+                            style={{ width: '100%' }}
+                          >
+                            <option value="">Choose a palette...</option>
+                            {profiles.map((profile) => (
+                              <option key={profile.id} value={profile.id}>
+                                {profile.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="slider-grid-fixed" style={styles.sliderGrid}>
+                      {row.sliders.map((slider) => {
+                        const rowColors = {
+                          low_color: row.low_color,
+                          medium_color: row.medium_color,
+                          high_color: row.high_color,
+                        }
+
+                        const sliderColor = valueToColor(slider.value, rowColors, slider.reversed)
+
+                        return (
+                          <div key={slider.id} style={styles.sliderCard}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                              <button
+                                className="button-soft"
+                                style={styles.iconButton}
+                                onClick={async () => {
+                                  setSliderValueLocally(slider.id, 50)
+                                  await broadcastEvent('slider-move', {
+                                    sliderId: slider.id,
+                                    value: 50,
+                                  })
+                                  await saveSliderValue(slider.id, 50)
+                                }}
+                                title="Reset slider"
+                              >
+                                ↺
+                              </button>
+
+                              <button
+                                className="button-danger"
+                                style={styles.iconButton}
+                                onClick={() => removeSlider(slider.id)}
+                                title="Remove slider"
+                              >
+                                ×
+                              </button>
+                            </div>
+
+                            <div style={styles.sliderWrap}>
+                              <input
+                                className="slider-vertical"
+                                type="range"
+                                min="0"
+                                max="100"
+                                value={slider.value}
+                                onChange={async (e) => {
+                                  const nextValue = clampValue(e.target.value)
+                                  setSliderValueLocally(slider.id, nextValue)
+                                  await broadcastEvent('slider-move', {
+                                    sliderId: slider.id,
+                                    value: nextValue,
+                                  })
+                                }}
+                                onMouseUp={(e) => saveSliderValue(slider.id, e.target.value)}
+                                onTouchEnd={(e) => saveSliderValue(slider.id, e.target.value)}
+                                style={{ '--slider-color': sliderColor }}
+                              />
+                            </div>
+
+                            <div
+                              style={{
+                                ...styles.colorBar,
+                                background: sliderColor,
+                                boxShadow: `0 0 18px ${sliderColor}`,
+                              }}
+                            />
+
+                            <div style={styles.sliderLabelRow}>
+                              <input
+                                className="hover-edit"
+                                style={styles.sliderLabel}
+                                value={slider.label}
+                                onChange={async (e) => {
+                                  const label = e.target.value
+                                  setSliderLabelLocally(slider.id, label)
+                                  await broadcastEvent('slider-label', {
+                                    sliderId: slider.id,
+                                    label,
+                                  })
+                                }}
+                                onBlur={(e) => saveSliderLabel(slider.id, e.target.value)}
+                              />
+
+                              <button
+                                className="button-soft"
+                                style={styles.reverseButton}
+                                onClick={() => toggleSliderReversed(slider.id, !!slider.reversed)}
+                                title="Reverse gradient"
+                              >
+                                {slider.reversed ? '⇄' : '↔'}
+                              </button>
+                            </div>
+
+                            <div style={styles.valueRow}>
+                              <span style={styles.smallLabel}>Value</span>
+                              <input
+                                className="input-soft"
+                                type="number"
+                                min="0"
+                                max="100"
+                                value={slider.value}
+                                onChange={async (e) => {
+                                  const nextValue = clampValue(e.target.value)
+                                  setSliderValueLocally(slider.id, nextValue)
+                                  await broadcastEvent('slider-move', {
+                                    sliderId: slider.id,
+                                    value: nextValue,
+                                  })
+                                }}
+                                onBlur={(e) => saveSliderValue(slider.id, e.target.value)}
+                                style={{ width: 80, textAlign: 'center' }}
+                              />
+                            </div>
+
+                            <div style={styles.sliderTalkRow}>
+                              <span style={styles.smallLabel}>Talk?</span>
+                              <button
+                                className="button-soft"
+                                style={{
+                                  ...styles.smallTalkToggleButton,
+                                  background: slider.talk ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.06)',
+                                  borderColor: slider.talk ? 'rgba(34,197,94,0.45)' : 'rgba(255,255,255,0.12)',
+                                }}
+                                onClick={() => toggleSliderTalk(slider.id, !!slider.talk)}
+                                title="Toggle talk"
+                              >
+                                <div
+                                  style={{
+                                    ...styles.smallTalkToggleKnob,
+                                    transform: slider.talk ? 'translateX(18px)' : 'translateX(0px)',
+                                  }}
+                                />
+                              </button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))
+              )}
+
+              <div style={styles.savedProfilesCard}>
+                <div style={styles.sectionTitle}>Saved Color Profiles</div>
+
+                {profiles.length === 0 ? (
+                  <div style={styles.smallMuted}>No saved palettes yet.</div>
+                ) : (
+                  <div style={styles.profileGrid}>
+                    {profiles.map((profile) => (
+                      <div key={profile.id} style={styles.profileCard}>
+                        <div style={styles.profileTop}>
+                          <input
+                            className="hover-edit"
+                            style={styles.profileName}
+                            value={profile.name}
+                            onChange={(e) => {
+                              setProfiles((prev) =>
+                                prev.map((p) => p.id === profile.id ? { ...p, name: e.target.value } : p)
+                              )
+                            }}
+                            onBlur={(e) => renamePalette(profile.id, e.target.value)}
+                          />
+
+                          <button
+                            className="button-danger"
+                            style={styles.iconButton}
+                            onClick={() => deletePalette(profile.id)}
+                            title="Delete palette"
+                          >
+                            ×
+                          </button>
+                        </div>
+
+                        <div style={styles.profileSwatches}>
+                          <div style={{ ...styles.swatch, background: profile.low_color }} />
+                          <div style={{ ...styles.swatch, background: profile.medium_color }} />
+                          <div style={{ ...styles.swatch, background: profile.high_color }} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        <aside style={styles.notesSidebar}>
+          <div style={styles.notesHeader}>Little notes</div>
+          <div style={styles.notesSubheader}>Tiny journal entries for when the other one isn’t around.</div>
+
+          <textarea
+            value={noteDraft}
+            onChange={(e) => setNoteDraft(e.target.value)}
+            placeholder="Write a little note..."
+            style={styles.noteComposer}
+          />
+
+          <button className="button-soft" onClick={postNote} style={styles.postNoteButton}>
+            Post entry
+          </button>
+
+          <div style={styles.notesList}>
+            {notes.length === 0 ? (
+              <div style={styles.notesEmpty}>
+                No notes yet :3
+              </div>
+            ) : (
+              notes.map((note, index) => (
+                <div
+                  key={note.id}
+                  style={{
+                    ...styles.noteCard,
+                    transform: `rotate(${(index % 2 === 0 ? -1 : 1) * 0.8}deg)`,
+                  }}
+                >
+                  <div style={styles.noteTimestamp}>{formatTimestamp(note.created_at)}</div>
+                  <div style={styles.noteContent}>{note.content}</div>
+                  <div style={styles.noteFooter}>
+                    <button
+                      className="button-danger"
+                      onClick={() => deleteNote(note.id)}
+                      style={styles.noteDeleteButton}
+                    >
+                      Remove
+                    </button>
                   </div>
                 </div>
               ))
             )}
-
-            <div style={styles.savedProfilesCard}>
-              <div style={styles.sectionTitle}>Saved Color Profiles</div>
-
-              {profiles.length === 0 ? (
-                <div style={styles.smallMuted}>No saved palettes yet.</div>
-              ) : (
-                <div style={styles.profileGrid}>
-                  {profiles.map((profile) => (
-                    <div key={profile.id} style={styles.profileCard}>
-                      <div style={styles.profileTop}>
-                        <input
-                          className="hover-edit"
-                          style={styles.profileName}
-                          value={profile.name}
-                          onChange={(e) => {
-                            setProfiles((prev) =>
-                              prev.map((p) => p.id === profile.id ? { ...p, name: e.target.value } : p)
-                            )
-                          }}
-                          onBlur={(e) => renamePalette(profile.id, e.target.value)}
-                        />
-
-                        <button
-                          className="button-danger"
-                          style={styles.iconButton}
-                          onClick={() => deletePalette(profile.id)}
-                          title="Delete palette"
-                        >
-                          ×
-                        </button>
-                      </div>
-
-                      <div style={styles.profileSwatches}>
-                        <div style={{ ...styles.swatch, background: profile.low_color }} />
-                        <div style={{ ...styles.swatch, background: profile.medium_color }} />
-                        <div style={{ ...styles.swatch, background: profile.high_color }} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </>
-        )}
+          </div>
+        </aside>
       </div>
     </div>
   )
@@ -1119,12 +1249,101 @@ const styles = {
     padding: 24,
     fontFamily: 'Arial, sans-serif',
   },
-  container: {
-    maxWidth: 1500,
+  appShell: {
+    maxWidth: 1900,
     margin: '0 auto',
+    display: 'grid',
+    gridTemplateColumns: 'minmax(0, 1fr) 360px',
+    gap: 20,
+    alignItems: 'start',
+  },
+  mainColumn: {
     display: 'flex',
     flexDirection: 'column',
     gap: 20,
+    minWidth: 0,
+  },
+  notesSidebar: {
+    position: 'sticky',
+    top: 24,
+    borderRadius: 28,
+    border: '1px solid rgba(255,255,255,0.12)',
+    background: 'rgba(255,255,255,0.06)',
+    backdropFilter: 'blur(10px)',
+    padding: 18,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 14,
+    minHeight: 300,
+  },
+  notesHeader: {
+    fontSize: 24,
+    fontWeight: 700,
+    color: '#fef3c7',
+  },
+  notesSubheader: {
+    fontSize: 13,
+    color: '#d4d4d8',
+    lineHeight: 1.5,
+  },
+  noteComposer: {
+    minHeight: 120,
+    resize: 'vertical',
+    borderRadius: 18,
+    border: '1px solid rgba(255,255,255,0.12)',
+    background: 'rgba(255,248,196,0.08)',
+    color: '#fff8dc',
+    padding: 14,
+    outline: 'none',
+    fontSize: 18,
+    lineHeight: 1.45,
+    fontFamily: '"Segoe Print", "Bradley Hand", "Comic Sans MS", cursive',
+  },
+  postNoteButton: {
+    alignSelf: 'flex-start',
+  },
+  notesList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 14,
+    marginTop: 4,
+  },
+  notesEmpty: {
+    padding: 18,
+    borderRadius: 18,
+    border: '1px dashed rgba(255,255,255,0.18)',
+    color: '#d4d4d8',
+    background: 'rgba(255,255,255,0.04)',
+  },
+  noteCard: {
+    background: '#fef08a',
+    color: '#3f2f0a',
+    borderRadius: 16,
+    padding: 14,
+    boxShadow: '0 12px 28px rgba(0,0,0,0.24)',
+    border: '1px solid rgba(255, 237, 160, 0.65)',
+  },
+  noteTimestamp: {
+    fontSize: 12,
+    fontWeight: 700,
+    marginBottom: 8,
+    color: '#6b4f0d',
+  },
+  noteContent: {
+    whiteSpace: 'pre-wrap',
+    wordBreak: 'break-word',
+    fontSize: 20,
+    lineHeight: 1.45,
+    fontFamily: '"Segoe Print", "Bradley Hand", "Comic Sans MS", cursive',
+  },
+  noteFooter: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    marginTop: 12,
+  },
+  noteDeleteButton: {
+    padding: '6px 10px',
+    fontSize: 12,
   },
   topCard: {
     display: 'flex',
