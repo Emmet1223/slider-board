@@ -771,6 +771,8 @@ export default function App() {
           border-radius: 50%;
           background: white;
           border: 2px solid rgba(0,0,0,0.35);
+          margin-left: -2px;
+          margin-right: -2px;
         }
 
         .slider-vertical::-moz-range-thumb {
