@@ -33,14 +33,18 @@ function mixColors(a, b, ratio) {
   })
 }
 
-function valueToColor(value, colors) {
+function valueToColor(value, colors, reversed = false) {
   const safe = Math.max(0, Math.min(100, Number(value) || 0))
 
+  const low = reversed ? colors.high_color : colors.low_color
+  const medium = colors.medium_color
+  const high = reversed ? colors.low_color : colors.high_color
+
   if (safe <= 50) {
-    return mixColors(colors.low_color, colors.medium_color, safe / 50)
+    return mixColors(low, medium, safe / 50)
   }
 
-  return mixColors(colors.medium_color, colors.high_color, (safe - 50) / 50)
+  return mixColors(medium, high, (safe - 50) / 50)
 }
 
 function clampValue(value) {
@@ -107,6 +111,14 @@ export default function App() {
     )
   }
 
+  function setSliderReversedLocally(sliderId, reversed) {
+    setSliders((prev) =>
+      prev.map((slider) =>
+        slider.id === sliderId ? { ...slider, reversed } : slider
+      )
+    )
+  }
+
   function setRowNameLocally(rowId, name) {
     setRows((prev) =>
       prev.map((row) =>
@@ -161,9 +173,7 @@ export default function App() {
 
     if (boardError) {
       setError(boardError.message)
-      if (showLoading) {
-        setLoading(false)
-      }
+      if (showLoading) setLoading(false)
       return
     }
 
@@ -175,9 +185,7 @@ export default function App() {
 
     if (rowError) {
       setError(rowError.message)
-      if (showLoading) {
-        setLoading(false)
-      }
+      if (showLoading) setLoading(false)
       return
     }
 
@@ -193,9 +201,7 @@ export default function App() {
 
       if (sliderError) {
         setError(sliderError.message)
-        if (showLoading) {
-          setLoading(false)
-        }
+        if (showLoading) setLoading(false)
         return
       }
 
@@ -210,9 +216,7 @@ export default function App() {
 
     if (profileError) {
       setError(profileError.message)
-      if (showLoading) {
-        setLoading(false)
-      }
+      if (showLoading) setLoading(false)
       return
     }
 
@@ -270,6 +274,10 @@ export default function App() {
         if (!payload || payload.senderId === clientIdRef.current) return
         setSliderValueLocally(payload.sliderId, payload.value)
       })
+      .on('broadcast', { event: 'slider-reversed' }, ({ payload }) => {
+        if (!payload || payload.senderId === clientIdRef.current) return
+        setSliderReversedLocally(payload.sliderId, payload.reversed)
+      })
       .subscribe()
 
     channelRef.current = channel
@@ -301,9 +309,7 @@ export default function App() {
       .update({ title })
       .eq('id', BOARD_ID)
 
-    if (error) {
-      setError(error.message)
-    }
+    if (error) setError(error.message)
   }
 
   async function saveRowName(rowId, name) {
@@ -312,9 +318,7 @@ export default function App() {
       .update({ name })
       .eq('id', rowId)
 
-    if (error) {
-      setError(error.message)
-    }
+    if (error) setError(error.message)
   }
 
   async function saveRowColor(rowId, key, value) {
@@ -323,9 +327,7 @@ export default function App() {
       .update({ [key]: value })
       .eq('id', rowId)
 
-    if (error) {
-      setError(error.message)
-    }
+    if (error) setError(error.message)
   }
 
   async function saveSliderLabel(sliderId, label) {
@@ -334,9 +336,7 @@ export default function App() {
       .update({ label })
       .eq('id', sliderId)
 
-    if (error) {
-      setError(error.message)
-    }
+    if (error) setError(error.message)
   }
 
   async function saveSliderValue(sliderId, value) {
@@ -347,9 +347,16 @@ export default function App() {
       .update({ value: safeValue })
       .eq('id', sliderId)
 
-    if (error) {
-      setError(error.message)
-    }
+    if (error) setError(error.message)
+  }
+
+  async function saveSliderReversed(sliderId, reversed) {
+    const { error } = await supabase
+      .from('sliders')
+      .update({ reversed })
+      .eq('id', sliderId)
+
+    if (error) setError(error.message)
   }
 
   async function runAndReload(work) {
@@ -420,6 +427,7 @@ export default function App() {
         label: `Slider ${row.position + 1}.${nextPosition + 1}`,
         value: 50,
         position: nextPosition,
+        reversed: false,
       })
       .select()
       .single()
@@ -446,6 +454,16 @@ export default function App() {
 
     removeSliderLocally(sliderId)
     await broadcastEvent('slider-removed', { sliderId })
+  }
+
+  async function toggleSliderReversed(sliderId, currentValue) {
+    const nextValue = !currentValue
+    setSliderReversedLocally(sliderId, nextValue)
+    await broadcastEvent('slider-reversed', {
+      sliderId,
+      reversed: nextValue,
+    })
+    await saveSliderReversed(sliderId, nextValue)
   }
 
   async function savePalette(row) {
@@ -585,6 +603,24 @@ export default function App() {
           border-radius: 50%;
           background: white;
           border: 2px solid rgba(0,0,0,0.35);
+        }
+
+        @media (max-width: 1280px) {
+          .slider-grid-fixed {
+            grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+          }
+        }
+
+        @media (max-width: 900px) {
+          .slider-grid-fixed {
+            grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+          }
+        }
+
+        @media (max-width: 640px) {
+          .slider-grid-fixed {
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+          }
         }
       `}</style>
 
@@ -745,7 +781,7 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div style={styles.sliderGrid}>
+                  <div className="slider-grid-fixed" style={styles.sliderGrid}>
                     {row.sliders.map((slider) => {
                       const rowColors = {
                         low_color: row.low_color,
@@ -753,7 +789,7 @@ export default function App() {
                         high_color: row.high_color,
                       }
 
-                      const sliderColor = valueToColor(slider.value, rowColors)
+                      const sliderColor = valueToColor(slider.value, rowColors, slider.reversed)
 
                       return (
                         <div key={slider.id} style={styles.sliderCard}>
@@ -813,20 +849,31 @@ export default function App() {
                             }}
                           />
 
-                          <input
-                            className="hover-edit"
-                            style={styles.sliderLabel}
-                            value={slider.label}
-                            onChange={async (e) => {
-                              const label = e.target.value
-                              setSliderLabelLocally(slider.id, label)
-                              await broadcastEvent('slider-label', {
-                                sliderId: slider.id,
-                                label,
-                              })
-                            }}
-                            onBlur={(e) => saveSliderLabel(slider.id, e.target.value)}
-                          />
+                          <div style={styles.sliderLabelRow}>
+                            <input
+                              className="hover-edit"
+                              style={styles.sliderLabel}
+                              value={slider.label}
+                              onChange={async (e) => {
+                                const label = e.target.value
+                                setSliderLabelLocally(slider.id, label)
+                                await broadcastEvent('slider-label', {
+                                  sliderId: slider.id,
+                                  label,
+                                })
+                              }}
+                              onBlur={(e) => saveSliderLabel(slider.id, e.target.value)}
+                            />
+
+                            <button
+                              className="button-soft"
+                              style={styles.reverseButton}
+                              onClick={() => toggleSliderReversed(slider.id, !!slider.reversed)}
+                              title="Reverse gradient"
+                            >
+                              {slider.reversed ? '⇄' : '↔'}
+                            </button>
+                          </div>
 
                           <div style={styles.valueRow}>
                             <span style={styles.smallLabel}>Value</span>
@@ -914,7 +961,7 @@ const styles = {
     fontFamily: 'Arial, sans-serif',
   },
   container: {
-    maxWidth: 1300,
+    maxWidth: 1500,
     margin: '0 auto',
     display: 'flex',
     flexDirection: 'column',
@@ -1011,7 +1058,7 @@ const styles = {
   },
   sliderGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))',
+    gridTemplateColumns: 'repeat(6, minmax(0, 1fr))',
     gap: 16,
     padding: 20,
   },
@@ -1024,6 +1071,7 @@ const styles = {
     border: '1px solid rgba(255,255,255,0.12)',
     background: 'rgba(255,255,255,0.05)',
     padding: 14,
+    minWidth: 0,
   },
   sliderWrap: {
     height: 210,
@@ -1037,11 +1085,25 @@ const styles = {
     borderRadius: 999,
     transition: '0.15s ease',
   },
-  sliderLabel: {
+  sliderLabelRow: {
     width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  sliderLabel: {
+    flex: 1,
+    minWidth: 0,
     textAlign: 'center',
     padding: '8px 10px',
     fontSize: 14,
+  },
+  reverseButton: {
+    width: 40,
+    height: 40,
+    padding: 0,
+    flexShrink: 0,
+    fontSize: 16,
   },
   valueRow: {
     display: 'flex',
